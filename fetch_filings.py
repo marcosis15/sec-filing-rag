@@ -1,6 +1,5 @@
 from wsgiref import headers
 import requests
-
 cik = "0001318605"
 def get_latest_10k(cik):
     headers = {'User-Agent': 'Marco Sison marcosison.1558@gmail.com'}
@@ -54,3 +53,32 @@ print(len(chunks))
 print(chunks[0][-250:])
 print("---")
 print(chunks[1][:250])
+import voyageai
+from dotenv import load_dotenv
+load_dotenv()
+vo = voyageai.Client()
+result =vo.embed(["Tesla's revenue grew significantly in 2025."], model="voyage-4")
+print(len(result.embeddings[0]))
+print(result.embeddings[0][:10])
+batch_size = 10
+embedded_chunks = []
+for i in range(0, len(chunks), batch_size):
+    result = vo.embed(chunks[i:i+batch_size], model="voyage-4")
+    for text, vector in zip(chunks[i:i+batch_size], result.embeddings):
+        embedded_chunks.append({'text':text, 'vector':vector})
+print(len(embedded_chunks))
+print(embedded_chunks[0]['text'][:250])
+import chromadb
+client = chromadb.Client()
+collection = client.create_collection(name = "tesla_10k")
+collection.add(
+    ids=[str(i) for i in range(len(embedded_chunks))],
+    embeddings=[chunk['vector'] for chunk in embedded_chunks],
+    documents=[chunk['text'] for chunk in embedded_chunks]
+)
+print(collection.count())
+query_result = collection.query(
+    query_embeddings=[vo.embed(["What was Tesla's total revenue?"], model="voyage-4").embeddings[0]],
+    n_results=3
+)
+print(query_result['documents'])
