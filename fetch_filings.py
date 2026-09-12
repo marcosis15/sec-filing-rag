@@ -69,16 +69,44 @@ for i in range(0, len(chunks), batch_size):
 print(len(embedded_chunks))
 print(embedded_chunks[0]['text'][:250])
 import chromadb
-client = chromadb.Client()
-collection = client.create_collection(name = "tesla_10k")
-collection.add(
-    ids=[str(i) for i in range(len(embedded_chunks))],
-    embeddings=[chunk['vector'] for chunk in embedded_chunks],
-    documents=[chunk['text'] for chunk in embedded_chunks]
-)
+client = chromadb.PersistentClient(path="./chroma_db")
+existing = [c.name for c in client.list_collections()]
+if "tesla_10k" not in existing:
+    collection = client.create_collection(name="tesla_10k")
+    collection.add(
+        ids=[str(i) for i in range(len(embedded_chunks))],
+        embeddings=[chunk['vector'] for chunk in embedded_chunks],
+        documents=[chunk['text'] for chunk in embedded_chunks]
+    )
+else:
+    collection = client.get_collection(name="tesla_10k")
+
 print(collection.count())
-query_result = collection.query(
-    query_embeddings=[vo.embed(["What was Tesla's total revenue?"], model="voyage-4").embeddings[0]],
-    n_results=3
-)
-print(query_result['documents'])
+def ask(question, collection, n_results=3):
+    question_embedding = vo.embed([question], model="voyage-4").embeddings[0]
+    query_result = collection.query(
+        query_embeddings=[question_embedding],
+        n_results=n_results
+    )
+    retrieved_chunks = query_result['documents'][0]
+    answer = generate_answer(question, retrieved_chunks)
+    return answer
+def generate_answer(question, retrieved_chunks):
+    from google import genai
+    from dotenv import load_dotenv
+    import os
+
+    load_dotenv()
+    genai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+    context = "\n\n".join(retrieved_chunks)
+    prompt = f"""Answer the following question based on the provided documents
+    Documents: {context}
+    Question: {question}"""
+
+    response = client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents=prompt
+    )
+    return response.text
+print(ask("What was Tesla's total revenue?", collection))
