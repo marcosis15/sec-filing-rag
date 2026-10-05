@@ -1,4 +1,3 @@
-from wsgiref import headers
 import requests
 cik = "0001318605"
 def get_latest_10k(cik):
@@ -20,9 +19,7 @@ def get_latest_10k(cik):
     doc_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_number}/{primary_documents[target_index]}"
     doc_response = requests.get(doc_url, headers=headers)
     return doc_response.text
-print(get_latest_10k(cik)[:500])
 from bs4 import BeautifulSoup
-raw_html = get_latest_10k(cik)
 def clean_html(raw_html):
     soup = BeautifulSoup(raw_html, 'html.parser')
     for tag in soup(['script', 'style']):
@@ -31,14 +28,11 @@ def clean_html(raw_html):
         tag.decompose()
     clean_text = soup.get_text(separator=' ', strip=True)
     return clean_text
-clean_text = clean_html(raw_html)
-print(clean_text[:500])
 import os
 def save_filing_text(text, filepath):
     os.makedirs('data', exist_ok=True)
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(text)
-save_filing_text(clean_text, 'data/tsla_10k_2025.txt')
 def chunk_text(data, chunk_size=1000, overlap=200):
     chunks = []
     start = 0
@@ -48,40 +42,9 @@ def chunk_text(data, chunk_size=1000, overlap=200):
         chunks.append(chunk)
         start += chunk_size - overlap
     return chunks
-chunks = chunk_text(clean_text)
-print(len(chunks))
-print(chunks[0][-250:])
-print("---")
-print(chunks[1][:250])
 import voyageai
 from dotenv import load_dotenv
-load_dotenv()
-vo = voyageai.Client()
-result =vo.embed(["Tesla's revenue grew significantly in 2025."], model="voyage-4")
-print(len(result.embeddings[0]))
-print(result.embeddings[0][:10])
-batch_size = 10
-embedded_chunks = []
-for i in range(0, len(chunks), batch_size):
-    result = vo.embed(chunks[i:i+batch_size], model="voyage-4")
-    for text, vector in zip(chunks[i:i+batch_size], result.embeddings):
-        embedded_chunks.append({'text':text, 'vector':vector})
-print(len(embedded_chunks))
-print(embedded_chunks[0]['text'][:250])
 import chromadb
-client = chromadb.PersistentClient(path="./chroma_db")
-existing = [c.name for c in client.list_collections()]
-if "tesla_10k" not in existing:
-    collection = client.create_collection(name="tesla_10k")
-    collection.add(
-        ids=[str(i) for i in range(len(embedded_chunks))],
-        embeddings=[chunk['vector'] for chunk in embedded_chunks],
-        documents=[chunk['text'] for chunk in embedded_chunks]
-    )
-else:
-    collection = client.get_collection(name="tesla_10k")
-
-print(collection.count())
 def ask(question, collection, n_results=3):
     question_embedding = vo.embed([question], model="voyage-4").embeddings[0]
     query_result = collection.query(
@@ -104,9 +67,44 @@ def generate_answer(question, retrieved_chunks):
     Documents: {context}
     Question: {question}"""
 
-    response = client.models.generate_content(
+    response = genai_client.models.generate_content(
         model="gemini-3.6-flash",
         contents=prompt
     )
     return response.text
-print(ask("What was Tesla's total revenue?", collection))
+if __name__ == "__main__":
+    raw_html = get_latest_10k(cik)
+    clean_text = clean_html(raw_html)
+    print(clean_text[:500])
+    save_filing_text(clean_text, 'data/tsla_10k_2025.txt')
+    chunks = chunk_text(clean_text)
+    print(len(chunks))
+    print(chunks[0][-250:])
+    print("---")
+    print(chunks[1][:250])
+    load_dotenv()
+    vo = voyageai.Client()
+    batch_size = 10
+    embedded_chunks = []
+    for i in range(0, len(chunks), batch_size):
+        result = vo.embed(chunks[i:i+batch_size], model="voyage-4")
+        for text, vector in zip(chunks[i:i+batch_size], result.embeddings):
+            embedded_chunks.append({'text':text, 'vector':vector})
+    print(len(embedded_chunks))
+    print(embedded_chunks[0]['text'][:250])
+    result =vo.embed(["Tesla's revenue grew significantly in 2025."], model="voyage-4")
+    print(len(result.embeddings[0]))
+    print(result.embeddings[0][:10])
+    client = chromadb.PersistentClient(path="./chroma_db")
+    existing = [c.name for c in client.list_collections()]
+    if "tesla_10k" not in existing:
+     collection = client.create_collection(name="tesla_10k")
+     collection.add(
+            ids=[str(i) for i in range(len(embedded_chunks))],
+            embeddings=[chunk['vector'] for chunk in embedded_chunks],
+            documents=[chunk['text'] for chunk in embedded_chunks]
+        )
+    else:
+        collection = client.get_collection(name="tesla_10k")
+    print(collection.count())
+    print(ask("What was Tesla's total revenue?", collection))
